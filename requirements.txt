@@ -1,4 +1,2 @@
+langchain-huggingface
 python-dotenv
-langchain
-langchain-openai
-langchain-community

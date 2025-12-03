@@ -1,1 +1,15 @@
+# Security: Keep secrets local!
+.env
 
+# Python compilation files (junk)
+__pycache__/
+*.pyc
+
+# Virtual Environments (if you use them)
+venv/
+.venv/
+env/
+
+# OS junk files
+.DS_Store
+Thumbs.db

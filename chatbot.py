@@ -2,22 +2,22 @@ import os
 import json
 import random
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_community.chat_message_histories import ChatMessageHistory
+from huggingface_hub import InferenceClient
 
 # Load enviroment
 load_dotenv()
 
 # check if there is a key
-if not os.getenv("OPENAI_API_KEY"):
-    raise ValueError("Please put your API key in .env")
+if not os.getenv("HUGGINGFACEHUB_API_TOKEN"):
+    raise ValueError("CRITICAL: HUGGINGFACEHUB_API_TOKEN is missing from .env file")
 
 class InterviewBot:
     def __init__(self):
-        self.model = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+        print("Connecting to Hugging Face Cloud... (This might take 5-10 seconds)")
+        self.client = InferenceClient(token=os.getenv("HUGGINGFACEHUB_API_TOKEN"))
         
+        # We use a specific model that is great for chat
+        self.model_id = "HuggingFaceH4/zephyr-7b-beta"
         # Load the questions into memory immediately
         self.questions = self.load_questions()
         self.current_question = None
@@ -28,7 +28,7 @@ class InterviewBot:
                 return json.load(f)
         except FileNotFoundError:
             print('Error: interview_data.json not found')
-            return[]
+            return []
         
     def select_question(self):
         if self.questions:
@@ -41,39 +41,47 @@ class InterviewBot:
     def get_feedback(self, user_answer):
         """Generates feedback based on the user's answer and the specific question tip."""
         
-        # 1. The Persona (System Prompt)
-        system_template = """
-        You are a supportive but strict Job Interview Coach.
-        
-        Context:
-        The user was asked: "{question}"
-        The known tip for this question is: "{tip}"
-        
-        Your Task:
-        1. Analyze the user's answer below.
-        2. Check if they used the STAR method (Situation, Task, Action, Result).
-        3. Provide 2 sentences of constructive feedback.
-        """
-        
-        # 2. Combining the Persona with User Input
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_template),
-            ("user", "{answer}")
-        ])
+        system_instruction = (
+            "You are a Job Interview Coach. Your task is to EVALUATE the candidate's answer. "
+            "RULES:\n"
+            "1. Do NOT generate a sample answer.\n"
+            "2. Do NOT pretend to be the candidate.\n"
+            "3. If the answer is too short (like 'yes', 'no', or empty), strictly say: 'That is too short. Please provide a full sentence.'\n"
+            "4. Provide 2 sentences of constructive feedback only."
+        )
 
-        # 3. The Chain: Prompt -> Model -> Text Cleaner
-        chain = prompt | self.model | StrOutputParser()
+        messages = [
+            {
+                "role": "system", 
+                "content": system_instruction
+            },
+            {
+                "role": "user", 
+                "content": (
+                    f"INTERVIEW QUESTION: {self.current_question['question']}\n"
+                    f"TIP: {self.current_question.get('tip')}\n"
+                    f"CANDIDATE ANSWER: \"{user_answer}\"\n\n"
+                    "Evaluate the answer above. Do not rewrite it."
+                )
+            }
+        ]
 
-        # 4. Execution: Sending the data to OpenAI
-        response = chain.invoke({
-            "question": self.current_question['question'],
-            "tip": self.current_question['tip'],
-            "answer": user_answer
-        })
-        
-        return response
-    
-    # Main class
+        try:
+            # 4. Call the API
+            response = self.client.chat_completion(
+                model=self.model_id,
+                messages=messages,
+                max_tokens=500,
+                temperature=0.7
+            )
+            
+            # Extract the text from the response object
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            return f"Error: {e}"
+
+# Main function
 def main():
     bot = InterviewBot()
     print("Hello, this is your friendly AI Interview Coach.")
@@ -91,14 +99,22 @@ def main():
         if user_input.lower() == 'q':
             print("Good luck with your interviews!")
             break
-
+        
+        if len(user_input) < 10:
+            print("⚠️  That answer is too short for an interview question.")
+            print("   Please type a full sentence explaining your experience.")
+            continue
+        
+        print("\n... Analyzing (via Mistral) ...")
         feedback = bot.get_feedback(user_input)
         print(f"Here are some feedbacks: {feedback}")
 
         # ask the next question
-        next_q = bot.select_question()
         print("Do you want to practice another question? (yes or no answer only)")
-        if user_input.lower() == 'yes':
+        continue_choice = input("You: ").lower()
+        
+        if continue_choice == 'yes':
+            next_q = bot.select_question()
             print(f"Your next question is: {next_q}")
         else:
             print("Good luck with your interviews!")
